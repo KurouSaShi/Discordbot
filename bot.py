@@ -61,14 +61,46 @@ STATUS_LEGEND = " ".join(f"{v} {k}" for k, v in STATUS_EMOJI.items())
 # ユーティリティ
 # ======================
 def load_json(path, default):
+    """JSONファイルを安全に読み込む"""
     if not os.path.exists(path):
+        print(f"File not found: {path}, creating with default value")
+        save_json(path, default)
         return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                print(f"Empty file: {path}, using default value")
+                save_json(path, default)
+                return default
+            return json.loads(content)
+    except json.JSONDecodeError as e:
+        print(f"JSON decode error in {path}: {e}, using default value")
+        save_json(path, default)
+        return default
+    except Exception as e:
+        print(f"Error loading {path}: {e}, using default value")
+        return default
 
 def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """JSONファイルを安全に保存"""
+    try:
+        # 一時ファイルに書き込んでから置き換え(atomic write)
+        temp_path = path + ".tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        # 正常に書き込めたら元のファイルを置き換え
+        os.replace(temp_path, path)
+    except Exception as e:
+        print(f"Error saving {path}: {e}")
+        # 一時ファイルが残っていたら削除
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
 def load_charters():
     return load_json(DATA_FILE, {})
@@ -106,6 +138,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
+    
+    # 初回起動時にファイルを初期化
+    load_charters()
+    load_notified()
+    print("JSON files initialized")
 
     # コマンド同期
     for guild_id in GUILD_IDS:
@@ -411,76 +448,79 @@ async def deadline(interaction: discord.Interaction):
 # ======================
 @tasks.loop(hours=24)
 async def deadline_check():
-    rows = await fetch_sheet_data()
-    
-    if not rows:
-        print("No data fetched for deadline check")
-        return
+    try:
+        rows = await fetch_sheet_data()
+        
+        if not rows:
+            print("No data fetched for deadline check")
+            return
 
-    today = datetime.now(timezone.utc).date()
-    charters = load_charters()
-    notified = load_notified()
+        today = datetime.now(timezone.utc).date()
+        charters = load_charters()
+        notified = load_notified()
 
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-
-        status = str(r.get("ステータス","")).strip()
-        if not any(s in status for s in ("作業中","優先作業")):
-            continue
-
-        date_str = str(r.get("本収録日","")).strip()
-        title = r.get("曲名","不明")
-
-        try:
-            target = datetime.strptime(date_str, "%Y/%m/%d").date()
-            if target.year < 1971:
-                continue
-        except Exception:
-            continue
-
-        diff_map = {}
-        for diff in ("Sp","Sm","Am","Wt"):
-            cell = str(r.get(diff,"")).strip()
-            for name, uid_list in charters.items():
-                if name in cell:
-                    for uid in uid_list:
-                        try:
-                            uid_int = int(uid)
-                            diff_map.setdefault(uid_int, set()).add(diff)
-                        except Exception as e:
-                            print(f"Invalid UID {uid} for name {name}: {e}")
-
-        if not diff_map:
-            continue
-
-        for days, tag in ((21,"week3"), (14,"week2")):
-            key = f"{title}_{date_str}_{tag}"
-            if today != target - timedelta(days=days):
-                continue
-            if key in notified:
+        for r in rows:
+            if not isinstance(r, dict):
                 continue
 
-            for uid, diffs in diff_map.items():
-                try:
-                    user = bot.get_user(uid) or await bot.fetch_user(uid)
+            status = str(r.get("ステータス","")).strip()
+            if not any(s in status for s in ("作業中","優先作業")):
+                continue
 
-                    if not any(bot.get_guild(gid) and bot.get_guild(gid).get_member(uid) for gid in GUILD_IDS):
-                        continue
+            date_str = str(r.get("本収録日","")).strip()
+            title = r.get("曲名","不明")
 
-                    await user.send(
-                        f"⏰ 納期通知 ({days}日前)\n"
-                        f"{title}\n"
-                        f"担当:{' / '.join(diffs)}\n"
-                        f"納期:{date_str}"
-                    )
-                    print(f"DM sent to {user} ({uid})")
-                except Exception as e:
-                    print(f"Failed to send DM to {uid}: {e}")
+            try:
+                target = datetime.strptime(date_str, "%Y/%m/%d").date()
+                if target.year < 1971:
+                    continue
+            except Exception:
+                continue
 
-            notified[key] = today.isoformat()
+            diff_map = {}
+            for diff in ("Sp","Sm","Am","Wt"):
+                cell = str(r.get(diff,"")).strip()
+                for name, uid_list in charters.items():
+                    if name in cell:
+                        for uid in uid_list:
+                            try:
+                                uid_int = int(uid)
+                                diff_map.setdefault(uid_int, set()).add(diff)
+                            except Exception as e:
+                                print(f"Invalid UID {uid} for name {name}: {e}")
 
-    save_notified(notified)
+            if not diff_map:
+                continue
+
+            for days, tag in ((21,"week3"), (14,"week2")):
+                key = f"{title}_{date_str}_{tag}"
+                if today != target - timedelta(days=days):
+                    continue
+                if key in notified:
+                    continue
+
+                for uid, diffs in diff_map.items():
+                    try:
+                        user = bot.get_user(uid) or await bot.fetch_user(uid)
+
+                        if not any(bot.get_guild(gid) and bot.get_guild(gid).get_member(uid) for gid in GUILD_IDS):
+                            continue
+
+                        await user.send(
+                            f"⏰ 納期通知 ({days}日前)\n"
+                            f"{title}\n"
+                            f"担当:{' / '.join(diffs)}\n"
+                            f"納期:{date_str}"
+                        )
+                        print(f"DM sent to {user} ({uid})")
+                    except Exception as e:
+                        print(f"Failed to send DM to {uid}: {e}")
+
+                notified[key] = today.isoformat()
+
+        save_notified(notified)
+    except Exception as e:
+        print(f"Error in deadline_check task: {e}")
 
 
 # ======================
