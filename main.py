@@ -6,6 +6,8 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
+from aiohttp import web
+import asyncio
 
 # 環境変数読み込み
 load_dotenv()
@@ -17,6 +19,7 @@ GUILD_IDS = [int(g) for g in os.getenv("GUILD_IDS", "").split(",") if g]
 # ======================
 TOKEN = os.getenv("DISCORD_TOKEN")
 SHEET_API = os.getenv("SHEET_API_URL")
+PORT = int(os.getenv("PORT", 8000))
 
 if not TOKEN or not SHEET_API:
     raise RuntimeError("環境変数が不足しています")
@@ -54,8 +57,15 @@ STATUS_LEGEND = " ".join(f"{v} {k}" for k, v in STATUS_EMOJI.items())
 def load_json(path, default):
     if not os.path.exists(path):
         return default
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                return default
+            return json.loads(content)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"Warning: Failed to load {path}: {e}. Using default.")
+        return default
 
 def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
@@ -77,13 +87,34 @@ def user_aliases(user_id: int, charter_map: dict) -> list[str]:
     return [name for name, users in charter_map.items() if user_id in users]
 
 # ======================
+# ヘルスチェック用Webサーバー
+# ======================
+async def health_check(request):
+    return web.Response(text="OK", status=200)
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    print(f"Health check server running on port {PORT}")
+
+# ======================
 # Bot
 # ======================
 intents = discord.Intents.default()
+intents.message_content = True  # メッセージコンテンツIntent追加
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    # ヘルスチェックサーバー起動
+    asyncio.create_task(start_web_server())
+    
     for guild_id in GUILD_IDS:
         guild = bot.get_guild(guild_id)
         if guild:
