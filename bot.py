@@ -10,6 +10,16 @@ from datetime import datetime, timedelta, timezone
 
 GUILD_IDS = [int(g) for g in os.getenv("GUILD_IDS", "").split(",") if g]
 
+@app.route("/")
+def home():
+    return "Bot is alive!", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))  # RenderがPORTを指定
+    app.run(host="0.0.0.0", port=port)
+
+threading.Thread(target=run_web).start()
+
 
 # ======================
 # 環境変数
