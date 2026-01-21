@@ -7,9 +7,17 @@ import json
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from flask import Flask
+from threading import Thread
 
-import asyncio
-import threading
+# Flask app for health check
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
 
 # ======================
 # 環境変数
@@ -26,28 +34,32 @@ DATA_FILE = "charter_users.json"
 NOTIFY_FILE = "sent_notifications.json"
 
 # ======================
-# Flask サーバー
-# ======================
-app = Flask("")
-
-@app.route("/")
-def home():
-    return "Bot is running ✅"
-
-def run_flask():
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-
-# ======================
-# Bot 本体
+# 定数
 # ======================
 DEFAULT_STATUS = "作業中"
-STATUS_LIST = ["未割当", "作業中", "優先作業", "準作業", "調整中", "配信待ち", "完了", "期間限定"]
+PER_PAGE = 10
+
+STATUS_LIST = [
+    "未割当", "作業中", "優先作業", "準作業",
+    "調整中", "配信待ち", "完了", "期間限定"
+]
+
 STATUS_EMOJI = {
-    "未割当": "⬜", "作業中": "🟨", "優先作業": "🔴", "準作業": "🟦",
-    "調整中": "🟪", "配信待ち": "🟩", "完了": "✅", "期間限定": "⏳"
+    "未割当": "⬜",
+    "作業中": "🟨",
+    "優先作業": "🔴",
+    "準作業": "🟦",
+    "調整中": "🟪",
+    "配信待ち": "🟩",
+    "完了": "✅",
+    "期間限定": "⏳"
 }
+
 STATUS_LEGEND = " ".join(f"{v} {k}" for k, v in STATUS_EMOJI.items())
 
+# ======================
+# ユーティリティ
+# ======================
 def load_json(path, default):
     if not os.path.exists(path):
         return default
@@ -58,11 +70,24 @@ def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def load_charters(): return load_json(DATA_FILE, {})
-def save_charters(data): save_json(DATA_FILE, data)
-def load_notified(): return load_json(NOTIFY_FILE, {})
-def save_notified(data): save_json(NOTIFY_FILE, data)
+def load_charters():
+    return load_json(DATA_FILE, {})
 
+def save_charters(data):
+    save_json(DATA_FILE, data)
+
+def load_notified():
+    return load_json(NOTIFY_FILE, {})
+
+def save_notified(data):
+    save_json(NOTIFY_FILE, data)
+
+def user_aliases(user_id: int, charter_map: dict) -> list[str]:
+    return [name for name, users in charter_map.items() if user_id in users]
+
+# ======================
+# Bot
+# ======================
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -75,6 +100,7 @@ async def on_ready():
     if not deadline_check.is_running():
         deadline_check.start()
     print("Bot ready & synced for specified guilds")
+
 
 # ======================
 # /get
@@ -201,10 +227,10 @@ async def listadd(interaction: discord.Interaction, name: str, user: discord.Use
     await interaction.response.send_message("✅ 追加しました")
 
 # ======================
-# /charterlist
+# /list
 # ======================
-@bot.tree.command(name="charterlist",guilds=[discord.Object(id=g) for g in GUILD_IDS])
-async def charterlist(interaction: discord.Interaction):
+@bot.tree.command(name="list",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+async def list_cmd(interaction: discord.Interaction):
     data = load_charters()
     user_map = {}
 
@@ -265,24 +291,6 @@ async def listopt(
 # ======================
 @bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def deadline(interaction: discord.Interaction):
-
-# ======================
-# /synccommands (管理者用)
-# ======================
-@bot.tree.command(name="synccommands", description="コマンドを再同期（管理者のみ）",guilds=[discord.Object(id=g) for g in GUILD_IDS])
-@app_commands.default_permissions(administrator=True)
-async def synccommands(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    
-    # Clear and sync commands for this guild
-    bot.tree.clear_commands(guild=interaction.guild)
-    await bot.tree.sync(guild=interaction.guild)
-    
-    await interaction.followup.send(
-        "✅ コマンドをクリアして再同期しました。\n"
-        "数分待ってから使用してください。",
-        ephemeral=True
-    )
     await interaction.response.defer(ephemeral=True)
 
     rows = requests.get(SHEET_API).json()
@@ -295,7 +303,7 @@ async def synccommands(interaction: discord.Interaction):
 
     if not my_aliases:
         await interaction.followup.send(
-            "❌ あなたの名義が /charterlist に登録されていません",
+            "❌ あなたの名義が /list に登録されていません",
             ephemeral=True
         )
         return
@@ -369,19 +377,26 @@ async def deadline_check():
     except Exception as e:
         print("Failed to fetch Sheet:", e)
         return
+
     today = datetime.now(timezone.utc).date()
     charters = load_charters()
     notified = load_notified()
 
     for r in rows:
-        if not isinstance(r, dict): continue
+        if not isinstance(r, dict):
+            continue
+
         status = str(r.get("ステータス","")).strip()
-        if not any(s in status for s in ("作業中","優先作業")): continue
+        if not any(s in status for s in ("作業中","優先作業")):
+            continue
+
         date_str = str(r.get("本収録日","")).strip()
         title = r.get("曲名","不明")
+
         try:
             target = datetime.strptime(date_str, "%Y/%m/%d").date()
-            if target.year < 1971: continue
+            if target.year < 1971:
+                continue
         except Exception:
             continue
 
@@ -391,32 +406,48 @@ async def deadline_check():
             for name, uid_list in charters.items():
                 if name in cell:
                     for uid in uid_list:
-                        try: diff_map.setdefault(int(uid), set()).add(diff)
-                        except: pass
-        if not diff_map: continue
+                        try:
+                            uid_int = int(uid)
+                            diff_map.setdefault(uid_int, set()).add(diff)
+                        except Exception as e:
+                            print(f"Invalid UID {uid} for name {name}: {e}")
+
+        if not diff_map:
+            continue
 
         for days, tag in ((21,"week3"), (14,"week2")):
             key = f"{title}_{date_str}_{tag}"
-            if today != target - timedelta(days=days): continue
-            if key in notified: continue
+            if today != target - timedelta(days=days):
+                continue
+            if key in notified:
+                continue
 
             for uid, diffs in diff_map.items():
                 try:
                     user = bot.get_user(uid) or await bot.fetch_user(uid)
+
                     if not any(bot.get_guild(gid) and bot.get_guild(gid).get_member(uid) for gid in GUILD_IDS):
                         continue
-                    await user.send(f"⏰ 納期通知 ({days}日前)\n{title}\n担当：{' / '.join(diffs)}\n納期：{date_str}")
+
+                    await user.send(
+                        f"⏰ 納期通知 ({days}日前)\n"
+                        f"{title}\n"
+                        f"担当:{' / '.join(diffs)}\n"
+                        f"納期:{date_str}"
+                    )
                     print(f"DM sent to {user} ({uid})")
                 except Exception as e:
                     print(f"Failed to send DM to {uid}: {e}")
+
             notified[key] = today.isoformat()
+
     save_notified(notified)
 
 # ======================
-# 並列実行
+# 起動
 # ======================
 if __name__ == "__main__":
-    # Flask スレッド
-    threading.Thread(target=run_flask).start()
-    # Discord Bot
+    # Start Flask in a separate thread
+    Thread(target=run_flask, daemon=True).start()
+    # Start Discord bot
     bot.run(TOKEN)
