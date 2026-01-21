@@ -115,15 +115,31 @@ async def on_ready():
     # ヘルスチェックサーバー起動
     asyncio.create_task(start_web_server())
     
+    # ギルド指定でコマンド同期
+    synced_count = 0
     for guild_id in GUILD_IDS:
         guild = bot.get_guild(guild_id)
         if guild:
-            await bot.tree.sync(guild=guild)
+            try:
+                synced = await bot.tree.sync(guild=discord.Object(id=guild_id))
+                synced_count += 1
+                print(f"Synced {len(synced)} commands to guild: {guild.name} ({guild_id})")
+            except Exception as e:
+                print(f"Failed to sync commands to guild {guild_id}: {e}")
+    
     if not deadline_check.is_running():
         deadline_check.start()
+    
     print(f"Bot ready! Logged in as {bot.user}")
-    print(f"Synced commands for {len(GUILD_IDS)} guilds")
+    print(f"Successfully synced commands to {synced_count}/{len(GUILD_IDS)} guilds")
 
+
+# ======================
+# /ping (デバッグ用)
+# ======================
+@bot.tree.command(name="ping", description="Botの動作確認", guilds=[discord.Object(id=g) for g in GUILD_IDS])
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message(f"🏓 Pong! Bot is working!")
 
 # ======================
 # /get
