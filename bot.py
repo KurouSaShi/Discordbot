@@ -96,7 +96,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
     
     for guild_id in GUILD_IDS:
-        guild_obj = discord.Object(id=guild_id)  # guildがNoneでも同期できる
+        guild_obj = discord.Object(id=guild_id)
         try:
             await bot.tree.sync(guild=guild_obj)
             print(f"Synced commands for guild {guild_id}")
@@ -107,6 +107,8 @@ async def on_ready():
         deadline_check.start()
     
     print("Bot ready & synced for specified guilds")
+
+
 
 # ======================
 # /get
