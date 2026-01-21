@@ -96,7 +96,7 @@ async def on_ready():
 # ======================
 # /get
 # ======================
-@bot.tree.command(name="get",guild_ids=GUILD_IDS)
+@bot.tree.command(name="get",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 @app_commands.describe(
     status="ステータス",
     count="件数",
@@ -157,7 +157,7 @@ async def get(
 # ======================
 # /search
 # ======================
-@bot.tree.command(name="search",guild_ids=GUILD_IDS)
+@bot.tree.command(name="search",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def search(interaction: discord.Interaction, keyword: str):
     await interaction.response.defer()
 
@@ -211,7 +211,7 @@ async def search(interaction: discord.Interaction, keyword: str):
 # ======================
 # /listadd
 # ======================
-@bot.tree.command(name="listadd",guild_ids=GUILD_IDS)
+@bot.tree.command(name="listadd",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def listadd(interaction: discord.Interaction, name: str, user: discord.User):
     data = load_charters()
     data.setdefault(name, [])
@@ -223,7 +223,7 @@ async def listadd(interaction: discord.Interaction, name: str, user: discord.Use
 # ======================
 # /list
 # ======================
-@bot.tree.command(name="list",guild_ids=GUILD_IDS)
+@bot.tree.command(name="list",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def list_cmd(interaction: discord.Interaction):
     data = load_charters()
     user_map = {}
@@ -248,7 +248,7 @@ async def list_cmd(interaction: discord.Interaction):
 # ======================
 # /listopt
 # ======================
-@bot.tree.command(name="listopt",guild_ids=GUILD_IDS)
+@bot.tree.command(name="listopt",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 @app_commands.choices(
     action=[
         app_commands.Choice(name="追加", value="add"),
@@ -283,7 +283,7 @@ async def listopt(
 # ======================
 # /deadline
 # ======================
-@bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認",guild_ids=GUILD_IDS)
+@bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def deadline(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
