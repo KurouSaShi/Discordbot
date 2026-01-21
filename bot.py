@@ -93,10 +93,16 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    # Clear old commands and sync new ones
     for guild_id in GUILD_IDS:
         guild = bot.get_guild(guild_id)
         if guild:
+            # Clear all commands first
+            bot.tree.clear_commands(guild=guild)
+            # Then sync new commands
             await bot.tree.sync(guild=guild)
+            print(f"Commands cleared and synced for guild {guild_id}")
+    
     if not deadline_check.is_running():
         deadline_check.start()
     print("Bot ready & synced for specified guilds")
@@ -291,6 +297,24 @@ async def listopt(
 # ======================
 @bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def deadline(interaction: discord.Interaction):
+
+# ======================
+# /synccommands (管理者用)
+# ======================
+@bot.tree.command(name="synccommands", description="コマンドを再同期（管理者のみ）",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@app_commands.default_permissions(administrator=True)
+async def synccommands(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    # Clear and sync commands for this guild
+    bot.tree.clear_commands(guild=interaction.guild)
+    await bot.tree.sync(guild=interaction.guild)
+    
+    await interaction.followup.send(
+        "✅ コマンドをクリアして再同期しました。\n"
+        "数分待ってから使用してください。",
+        ephemeral=True
+    )
     await interaction.response.defer(ephemeral=True)
 
     rows = requests.get(SHEET_API).json()
