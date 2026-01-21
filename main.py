@@ -163,44 +163,58 @@ async def get(
 ):
     await interaction.response.defer()
 
-    selected_status = status.value if status else DEFAULT_STATUS
-    rows = requests.get(SHEET_API).json()
+    try:
+        selected_status = status.value if status else DEFAULT_STATUS
+        response = requests.get(SHEET_API, timeout=10)
+        response.raise_for_status()
+        rows = response.json()
 
-    rows = [
-        r for r in rows
-        if isinstance(r, dict)
-        and r.get("曲名")
-        and r.get("作曲者")
-        and r.get("ステータス") == selected_status
-    ]
-
-    if not include_unassigned:
-        rows = [r for r in rows if r["ステータス"] != "未割当"]
-
-    if charter:
         rows = [
             r for r in rows
-            if any(charter in str(r.get(c, "")) for c in ("Sp", "Sm", "Am", "Wt"))
+            if isinstance(r, dict)
+            and r.get("曲名")
+            and r.get("作曲者")
+            and r.get("ステータス") == selected_status
         ]
 
-    rows = rows[-count:]
+        if not include_unassigned:
+            rows = [r for r in rows if r["ステータス"] != "未割当"]
 
-    embed = discord.Embed(title="🎵 曲一覧", color=0x5865F2)
+        if charter:
+            rows = [
+                r for r in rows
+                if any(charter in str(r.get(c, "")) for c in ("Sp", "Sm", "Am", "Wt"))
+            ]
 
-    for r in rows:
-        embed.add_field(
-            name=f"{STATUS_EMOJI.get(r['ステータス'],'❓')} {r['曲名']} / {r['作曲者']}",
-            value=(
-                f"**Sp**:{r.get('Sp','-')}\n"
-                f"**Sm**:{r.get('Sm','-')}\n"
-                f"**Am**:{r.get('Am','-')}\n"
-                f"**Wt**:{r.get('Wt','-')}"
-            ),
-            inline=False
-        )
+        rows = rows[-count:]
 
-    embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
-    await interaction.followup.send(embed=embed)
+        if not rows:
+            await interaction.followup.send("該当する曲が見つかりませんでした")
+            return
+
+        embed = discord.Embed(title="🎵 曲一覧", color=0x5865F2)
+
+        for r in rows:
+            embed.add_field(
+                name=f"{STATUS_EMOJI.get(r['ステータス'],'❓')} {r['曲名']} / {r['作曲者']}",
+                value=(
+                    f"**Sp**:{r.get('Sp','-')}\n"
+                    f"**Sm**:{r.get('Sm','-')}\n"
+                    f"**Am**:{r.get('Am','-')}\n"
+                    f"**Wt**:{r.get('Wt','-')}"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
+        await interaction.followup.send(embed=embed)
+    
+    except requests.RequestException as e:
+        print(f"API Error: {e}")
+        await interaction.followup.send("❌ APIへのアクセスに失敗しました", ephemeral=True)
+    except Exception as e:
+        print(f"Error in /get: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 # ======================
 # /search
@@ -209,48 +223,58 @@ async def get(
 async def search(interaction: discord.Interaction, keyword: str):
     await interaction.response.defer()
 
-    rows = requests.get(SHEET_API).json()
+    try:
+        response = requests.get(SHEET_API, timeout=10)
+        response.raise_for_status()
+        rows = response.json()
 
-    rows = [
-        r for r in rows
-        if isinstance(r, dict)
-        and r.get("曲名")
-        and r.get("作曲者")
-    ]
+        rows = [
+            r for r in rows
+            if isinstance(r, dict)
+            and r.get("曲名")
+            and r.get("作曲者")
+        ]
 
-    rows = [
-        r for r in rows
-        if (
-            keyword in str(r.get("曲名",""))
-            or keyword in str(r.get("作曲者",""))
-            or any(keyword in str(r.get(c,"")) for c in ("Sp","Sm","Am","Wt"))
-        )
-    ]
+        rows = [
+            r for r in rows
+            if (
+                keyword in str(r.get("曲名",""))
+                or keyword in str(r.get("作曲者",""))
+                or any(keyword in str(r.get(c,"")) for c in ("Sp","Sm","Am","Wt"))
+            )
+        ]
 
-    if not rows:
-        await interaction.followup.send("🔍 該当する曲はありません")
-        return
+        if not rows:
+            await interaction.followup.send("🔍 該当する曲はありません")
+            return
 
-    embed = discord.Embed(
-        title="🎵 曲一覧",
-        color=0x5865F2
-    )
-
-    for r in rows[:10]:
-        embed.add_field(
-            name=f"{STATUS_EMOJI.get(r.get('ステータス'),'❓')} "
-                 f"{r['曲名']} / {r['作曲者']}",
-            value=(
-                f"**Sp**:{r.get('Sp','-')}\n"
-                f"**Sm**:{r.get('Sm','-')}\n"
-                f"**Am**:{r.get('Am','-')}\n"
-                f"**Wt**:{r.get('Wt','-')}"
-            ),
-            inline=False
+        embed = discord.Embed(
+            title="🎵 曲一覧",
+            color=0x5865F2
         )
 
-    embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
-    await interaction.followup.send(embed=embed)
+        for r in rows[:10]:
+            embed.add_field(
+                name=f"{STATUS_EMOJI.get(r.get('ステータス'),'❓')} "
+                     f"{r['曲名']} / {r['作曲者']}",
+                value=(
+                    f"**Sp**:{r.get('Sp','-')}\n"
+                    f"**Sm**:{r.get('Sm','-')}\n"
+                    f"**Am**:{r.get('Am','-')}\n"
+                    f"**Wt**:{r.get('Wt','-')}"
+                ),
+                inline=False
+            )
+
+        embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
+        await interaction.followup.send(embed=embed)
+    
+    except requests.RequestException as e:
+        print(f"API Error: {e}")
+        await interaction.followup.send("❌ APIへのアクセスに失敗しました", ephemeral=True)
+    except Exception as e:
+        print(f"Error in /search: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 
 
@@ -259,37 +283,51 @@ async def search(interaction: discord.Interaction, keyword: str):
 # ======================
 @bot.tree.command(name="listadd",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def listadd(interaction: discord.Interaction, name: str, user: discord.User):
-    data = load_charters()
-    data.setdefault(name, [])
-    if user.id not in data[name]:
-        data[name].append(user.id)
-        save_charters(data)
-    await interaction.response.send_message("✅ 追加しました")
+    try:
+        await interaction.response.defer(ephemeral=True)
+        data = load_charters()
+        data.setdefault(name, [])
+        if user.id not in data[name]:
+            data[name].append(user.id)
+            save_charters(data)
+        await interaction.followup.send("✅ 追加しました", ephemeral=True)
+    except Exception as e:
+        print(f"Error in /listadd: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 # ======================
 # /list
 # ======================
 @bot.tree.command(name="list",guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def list_cmd(interaction: discord.Interaction):
-    data = load_charters()
-    user_map = {}
+    try:
+        await interaction.response.defer()
+        data = load_charters()
+        user_map = {}
 
-    for name, users in data.items():
-        for uid in users:
-            user_map.setdefault(uid, []).append(name)
+        for name, users in data.items():
+            for uid in users:
+                user_map.setdefault(uid, []).append(name)
 
-    embed = discord.Embed(title="📋 Charter一覧", color=0x57F287)
+        if not user_map:
+            await interaction.followup.send("📋 登録されているユーザーはいません")
+            return
 
-    for uid, names in user_map.items():
-        member = interaction.guild.get_member(uid)
-        mention = member.mention if member else f"<@{uid}>"
-        embed.add_field(
-            name="",
-            value=f"{mention}\n" + " / ".join(sorted(names)),
-            inline=False
-        )
+        embed = discord.Embed(title="📋 Charter一覧", color=0x57F287)
 
-    await interaction.response.send_message(embed=embed if user_map else "登録なし")
+        for uid, names in user_map.items():
+            member = interaction.guild.get_member(uid)
+            mention = member.mention if member else f"<@{uid}>"
+            embed.add_field(
+                name="",
+                value=f"{mention}\n" + " / ".join(sorted(names)),
+                inline=False
+            )
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        print(f"Error in /list: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 # ======================
 # /listopt
@@ -307,24 +345,29 @@ async def listopt(
     user: discord.User,
     new_name: str
 ):
-    data = load_charters()
-    uid = user.id
+    try:
+        await interaction.response.defer(ephemeral=True)
+        data = load_charters()
+        uid = user.id
 
-    if action.value == "add":
-        data.setdefault(new_name, [])
-        if uid not in data[new_name]:
-            data[new_name].append(uid)
-            save_charters(data)
-        await interaction.response.send_message("✅ 名義を追加しました")
-    else:
-        if new_name in data and uid in data[new_name]:
-            data[new_name].remove(uid)
-            if not data[new_name]:
-                del data[new_name]
-            save_charters(data)
-            await interaction.response.send_message("🗑️ 削除しました")
+        if action.value == "add":
+            data.setdefault(new_name, [])
+            if uid not in data[new_name]:
+                data[new_name].append(uid)
+                save_charters(data)
+            await interaction.followup.send("✅ 名義を追加しました", ephemeral=True)
         else:
-            await interaction.response.send_message("❌ 紐づいていません")
+            if new_name in data and uid in data[new_name]:
+                data[new_name].remove(uid)
+                if not data[new_name]:
+                    del data[new_name]
+                save_charters(data)
+                await interaction.followup.send("🗑️ 削除しました", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ 紐づいていません", ephemeral=True)
+    except Exception as e:
+        print(f"Error in /listopt: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 # ======================
 # /deadline
@@ -333,78 +376,91 @@ async def listopt(
 async def deadline(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    rows = requests.get(SHEET_API).json()
-    charter_map = load_charters()
+    try:
+        response = requests.get(SHEET_API, timeout=10)
+        response.raise_for_status()
+        rows = response.json()
+        
+        charter_map = load_charters()
 
-    my_aliases = [
-        name for name, users in charter_map.items()
-        if interaction.user.id in users
-    ]
+        my_aliases = [
+            name for name, users in charter_map.items()
+            if interaction.user.id in users
+        ]
 
-    if not my_aliases:
+        if not my_aliases:
+            await interaction.followup.send(
+                "❌ あなたの名義が /list に登録されていません",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="⏰ 担当中のタスク",
+            color=0xFEE75C
+        )
+
+        found = False
+        valid_status = {"作業中", "優先作業"}
+
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+
+            if r.get("ステータス") not in valid_status:
+                continue
+
+            date_str = r.get("本収録日")
+            if not date_str:
+                continue
+
+            try:
+                target = datetime.strptime(date_str, "%Y/%m/%d")
+            except ValueError:
+                continue
+
+            matched_diffs = []
+            for diff in ("Sp", "Sm", "Am", "Wt"):
+                cell = str(r.get(diff, ""))
+                if any(alias in cell for alias in my_aliases):
+                    matched_diffs.append(diff)
+
+            if not matched_diffs:
+                continue
+
+            found = True
+            timestamp = int(target.timestamp())
+
+            embed.add_field(
+                name=r.get("曲名", "不明"),
+                value=(
+                    f"**担当難易度**:{' / '.join(matched_diffs)}\n"
+                    f"**納期**:<t:{timestamp}:R>"
+                ),
+                inline=False
+            )
+
+        if not found:
+            await interaction.followup.send(
+                "📭 現在、担当中のタスクはありません",
+                ephemeral=True
+            )
+            return
+
+        await interaction.user.send(embed=embed)
         await interaction.followup.send(
-            "❌ あなたの名義が /list に登録されていません",
+            "📬 DMに担当中タスクを送信しました",
             ephemeral=True
         )
-        return
-
-    embed = discord.Embed(
-        title="⏰ 担当中のタスク",
-        color=0xFEE75C
-    )
-
-    found = False
-    valid_status = {"作業中", "優先作業"}
-
-    for r in rows:
-        if not isinstance(r, dict):
-            continue
-
-        if r.get("ステータス") not in valid_status:
-            continue
-
-        date_str = r.get("本収録日")
-        if not date_str:
-            continue
-
-        try:
-            target = datetime.strptime(date_str, "%Y/%m/%d")
-        except ValueError:
-            continue
-
-        matched_diffs = []
-        for diff in ("Sp", "Sm", "Am", "Wt"):
-            cell = str(r.get(diff, ""))
-            if any(alias in cell for alias in my_aliases):
-                matched_diffs.append(diff)
-
-        if not matched_diffs:
-            continue
-
-        found = True
-        timestamp = int(target.timestamp())
-
-        embed.add_field(
-            name=r.get("曲名", "不明"),
-            value=(
-                f"**担当難易度**:{' / '.join(matched_diffs)}\n"
-                f"**納期**:<t:{timestamp}:R>"
-            ),
-            inline=False
-        )
-
-    if not found:
-        await interaction.followup.send(
-            "📭 現在、担当中のタスクはありません",
-            ephemeral=True
-        )
-        return
-
-    await interaction.user.send(embed=embed)
-    await interaction.followup.send(
-        "📬 DMに担当中タスクを送信しました",
-        ephemeral=True
-    )
+    
+    except requests.RequestException as e:
+        print(f"API Error: {e}")
+        await interaction.followup.send("❌ APIへのアクセスに失敗しました", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("❌ DMを送信できませんでした。DMの受信設定を確認してください", ephemeral=True)
+    except Exception as e:
+        print(f"Error in /deadline: {e}")
+        await interaction.followup.send("❌ エラーが発生しました", ephemeral=True)
 
 
 
