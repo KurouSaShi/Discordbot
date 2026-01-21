@@ -227,10 +227,10 @@ async def listadd(interaction: discord.Interaction, name: str, user: discord.Use
     await interaction.response.send_message("✅ 追加しました")
 
 # ======================
-# /list
+# /charterlist
 # ======================
-@bot.tree.command(name="list",guilds=[discord.Object(id=g) for g in GUILD_IDS])
-async def list_cmd(interaction: discord.Interaction):
+@bot.tree.command(name="charterlist",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+async def charterlist(interaction: discord.Interaction):
     data = load_charters()
     user_map = {}
 
@@ -303,7 +303,7 @@ async def deadline(interaction: discord.Interaction):
 
     if not my_aliases:
         await interaction.followup.send(
-            "❌ あなたの名義が /list に登録されていません",
+            "❌ あなたの名義が /charterlist に登録されていません",
             ephemeral=True
         )
         return
