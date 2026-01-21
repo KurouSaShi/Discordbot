@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 GUILD_IDS = [int(g) for g in os.getenv("GUILD_IDS", "").split(",") if g]
 
+app = Flask("") 
+
 @app.route("/")
 def home():
     return "Bot is alive!", 200
