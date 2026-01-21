@@ -4,24 +4,20 @@ from discord.ext import commands, tasks
 import requests
 import os
 import json
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
+from dotenv import load_dotenv
+from flask import Flask
+from threading import Thread
 
-GUILD_IDS = [int(g) for g in os.getenv("GUILD_IDS", "").split(",") if g]
+# Flask app for health check
+app = Flask(__name__)
 
-app = Flask("") 
-
-@app.route("/")
+@app.route('/')
 def home():
-    return "Bot is alive!", 200
+    return "Bot is running!"
 
-def run_web():
-    port = int(os.environ.get("PORT", 10000))  # RenderがPORTを指定
-    app.run(host="0.0.0.0", port=port)
-
-threading.Thread(target=run_web).start()
-
+def run_flask():
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
 
 # ======================
 # 環境変数
@@ -29,6 +25,7 @@ threading.Thread(target=run_web).start()
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 SHEET_API = os.getenv("SHEET_API_URL")
+GUILD_IDS = [int(g) for g in os.getenv("GUILD_IDS", "").split(",") if g]
 
 if not TOKEN or not SHEET_API:
     raise RuntimeError("環境変数が不足しています")
@@ -155,15 +152,15 @@ async def get(
         embed.add_field(
             name=f"{STATUS_EMOJI.get(r['ステータス'],'❓')} {r['曲名']} / {r['作曲者']}",
             value=(
-                f"**Sp**：{r.get('Sp','-')}\n"
-                f"**Sm**：{r.get('Sm','-')}\n"
-                f"**Am**：{r.get('Am','-')}\n"
-                f"**Wt**：{r.get('Wt','-')}"
+                f"**Sp**:{r.get('Sp','-')}\n"
+                f"**Sm**:{r.get('Sm','-')}\n"
+                f"**Am**:{r.get('Am','-')}\n"
+                f"**Wt**:{r.get('Wt','-')}"
             ),
             inline=False
         )
 
-    embed.set_footer(text=f"凡例：{STATUS_LEGEND}")
+    embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
     await interaction.followup.send(embed=embed)
 
 # ======================
@@ -175,7 +172,6 @@ async def search(interaction: discord.Interaction, keyword: str):
 
     rows = requests.get(SHEET_API).json()
 
-    # 空行・型不正を除外
     rows = [
         r for r in rows
         if isinstance(r, dict)
@@ -183,7 +179,6 @@ async def search(interaction: discord.Interaction, keyword: str):
         and r.get("作曲者")
     ]
 
-    # keyword 検索（曲名も含む）
     rows = [
         r for r in rows
         if (
@@ -207,17 +202,16 @@ async def search(interaction: discord.Interaction, keyword: str):
             name=f"{STATUS_EMOJI.get(r.get('ステータス'),'❓')} "
                  f"{r['曲名']} / {r['作曲者']}",
             value=(
-                f"**Sp**：{r.get('Sp','-')}\n"
-                f"**Sm**：{r.get('Sm','-')}\n"
-                f"**Am**：{r.get('Am','-')}\n"
-                f"**Wt**：{r.get('Wt','-')}"
+                f"**Sp**:{r.get('Sp','-')}\n"
+                f"**Sm**:{r.get('Sm','-')}\n"
+                f"**Am**:{r.get('Am','-')}\n"
+                f"**Wt**:{r.get('Wt','-')}"
             ),
             inline=False
         )
 
-    embed.set_footer(text=f"凡例：{STATUS_LEGEND}")
+    embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
     await interaction.followup.send(embed=embed)
-
 
 
 # ======================
@@ -302,7 +296,6 @@ async def deadline(interaction: discord.Interaction):
     rows = requests.get(SHEET_API).json()
     charter_map = load_charters()
 
-    # 自分の全名義（例: ["黒兎氏", "veal"]）
     my_aliases = [
         name for name, users in charter_map.items()
         if interaction.user.id in users
@@ -327,7 +320,6 @@ async def deadline(interaction: discord.Interaction):
         if not isinstance(r, dict):
             continue
 
-        # ステータス条件
         if r.get("ステータス") not in valid_status:
             continue
 
@@ -340,7 +332,6 @@ async def deadline(interaction: discord.Interaction):
         except ValueError:
             continue
 
-        # 難易度チェック（U〜X列）
         matched_diffs = []
         for diff in ("Sp", "Sm", "Am", "Wt"):
             cell = str(r.get(diff, ""))
@@ -356,8 +347,8 @@ async def deadline(interaction: discord.Interaction):
         embed.add_field(
             name=r.get("曲名", "不明"),
             value=(
-                f"**担当難易度**：{' / '.join(matched_diffs)}\n"
-                f"**納期**：<t:{timestamp}:R>"
+                f"**担当難易度**:{' / '.join(matched_diffs)}\n"
+                f"**納期**:<t:{timestamp}:R>"
             ),
             inline=False
         )
@@ -369,13 +360,11 @@ async def deadline(interaction: discord.Interaction):
         )
         return
 
-    # DM送信
     await interaction.user.send(embed=embed)
     await interaction.followup.send(
         "📬 DMに担当中タスクを送信しました",
         ephemeral=True
     )
-
 
 
 # ======================
@@ -390,14 +379,13 @@ async def deadline_check():
         return
 
     today = datetime.now(timezone.utc).date()
-    charters = load_charters()   # {名義: [UID,...]}
-    notified = load_notified()   # {キー: 日付}
+    charters = load_charters()
+    notified = load_notified()
 
     for r in rows:
         if not isinstance(r, dict):
             continue
 
-        # ステータス判定
         status = str(r.get("ステータス","")).strip()
         if not any(s in status for s in ("作業中","優先作業")):
             continue
@@ -405,7 +393,6 @@ async def deadline_check():
         date_str = str(r.get("本収録日","")).strip()
         title = r.get("曲名","不明")
 
-        # 日付変換
         try:
             target = datetime.strptime(date_str, "%Y/%m/%d").date()
             if target.year < 1971:
@@ -413,8 +400,7 @@ async def deadline_check():
         except Exception:
             continue
 
-        # 難易度列 U~X と名義マッチ
-        diff_map = {}  # uid(int) -> set of diff
+        diff_map = {}
         for diff in ("Sp","Sm","Am","Wt"):
             cell = str(r.get(diff,"")).strip()
             for name, uid_list in charters.items():
@@ -429,7 +415,6 @@ async def deadline_check():
         if not diff_map:
             continue
 
-        # 通知判定
         for days, tag in ((21,"week3"), (14,"week2")):
             key = f"{title}_{date_str}_{tag}"
             if today != target - timedelta(days=days):
@@ -437,27 +422,23 @@ async def deadline_check():
             if key in notified:
                 continue
 
-            # DM送信（対象サーバー所属ユーザーのみ）
             for uid, diffs in diff_map.items():
                 try:
-                    # ユーザー取得
                     user = bot.get_user(uid) or await bot.fetch_user(uid)
 
-                    # 所属サーバーチェック
                     if not any(bot.get_guild(gid) and bot.get_guild(gid).get_member(uid) for gid in GUILD_IDS):
-                        continue  # 指定サーバーにいなければスキップ
+                        continue
 
                     await user.send(
                         f"⏰ 納期通知 ({days}日前)\n"
                         f"{title}\n"
-                        f"担当：{' / '.join(diffs)}\n"
-                        f"納期：{date_str}"
+                        f"担当:{' / '.join(diffs)}\n"
+                        f"納期:{date_str}"
                     )
                     print(f"DM sent to {user} ({uid})")
                 except Exception as e:
                     print(f"Failed to send DM to {uid}: {e}")
 
-            # 送信済み登録
             notified[key] = today.isoformat()
 
     save_notified(notified)
@@ -465,4 +446,8 @@ async def deadline_check():
 # ======================
 # 起動
 # ======================
-bot.run(TOKEN)
+if __name__ == "__main__":
+    # Start Flask in a separate thread
+    Thread(target=run_flask, daemon=True).start()
+    # Start Discord bot
+    bot.run(TOKEN)
