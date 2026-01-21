@@ -93,14 +93,20 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
+    print(f"Logged in as {bot.user}")
+    
     for guild_id in GUILD_IDS:
-        guild = bot.get_guild(guild_id)
-        if guild:
-            await bot.tree.sync(guild=guild)
+        guild_obj = discord.Object(id=guild_id)  # guildがNoneでも同期できる
+        try:
+            await bot.tree.sync(guild=guild_obj)
+            print(f"Synced commands for guild {guild_id}")
+        except Exception as e:
+            print(f"Failed to sync guild {guild_id}: {e}")
+    
     if not deadline_check.is_running():
         deadline_check.start()
+    
     print("Bot ready & synced for specified guilds")
-
 
 # ======================
 # /get
