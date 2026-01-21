@@ -1,7 +1,103 @@
+Renderでホスティングしているとslashコマンドが使えません
+15:38
+
+Renderでスラッシュコマンドが使えない問題、いくつか原因が考えられます。順番に確認していきましょう。
+主な原因と解決策
+1. Bot権限とスコープの確認
+
+Discord Developer Portalで、Botに必要な権限とスコープが設定されているか確認してください：
+
+    OAuth2 > URL Generatorで以下を選択:
+        bot
+        applications.commands
+    Bot Permissionsで必要な権限を選択
+    生成されたURLでBotを再招待
+
+2. コマンド同期のタイミング問題
+
+Renderの起動時にコマンド同期が完了する前にタイムアウトしている可能性があります。以下のように修正してみてください：
+python
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user}")
+
+    # グローバル同期を試す（テスト用）
+    try:
+        synced = await bot.tree.sync()
+        print(f"
+
+Renderでホスティングしているとslashコマンドが使えません。
+アプリケーションが応答しませんでしたとでます
+15:38
+
+「アプリケーションが応答しませんでした」エラーは、Discordのインタラクションが3秒以内に応答されなかったことを意味します。Renderでの主な原因と解決策を説明します。
+主な問題点
+
+    API呼び出しが遅い - requests.get(SHEET_API)が同期処理でブロッキングしている
+    Renderのコールドスタート - 無料プランだとスリープから復帰に時間がかかる
+
+修正版コード
+
+以下の変更を適用してください：
+改善版 Discord Bot (非同期API対応)
+コード 
+主な変更点
+1. requests → aiohttpに変更
+
+    同期的なrequests.get()が処理をブロックしていた
+    aiohttpで非同期API呼び出しに変更
+    タイムアウトを10秒に設定
+
+2. すべてのコマンドで即座にdefer()を実行
+
+    Discordの3秒制限に対応
+    処理が長くても「考え中」と表示される
+
+3. エラーハンドリングの改善
+
+    API取得失敗時に空リストを返す
+    DM送信失敗時のエラーメッセージ追加
+
+追加で必要な作業
+requirements.txt に追加
+txt
+
+aiohttp
+
+Renderの設定確認
+
+    Environment Variablesが正しく設定されているか確認
+        DISCORD_TOKEN
+        SHEET_API_URL
+        GUILD_IDS
+
+    Build Command (Python環境):
+
+bash
+
+   pip install -r requirements.txt
+
+    Start Command:
+
+bash
+
+   python main.py
+
+デバッグ方法
+
+Renderのログで以下を確認：
+
+    Logged in as ... が表示されるか
+    Synced X commands for guild ... が表示されるか
+    エラーメッセージの内
+
+
+Claude は AI のため、誤りを含む可能性があります。回答内容は必ずご確認ください。
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-import requests
+import aiohttp
 import os
 import json
 from datetime import datetime, timedelta, timezone
@@ -82,8 +178,20 @@ def load_notified():
 def save_notified(data):
     save_json(NOTIFY_FILE, data)
 
-def user_aliases(user_id: int, charter_map: dict) -> list[str]:
-    return [name for name, users in charter_map.items() if user_id in users]
+# 非同期API呼び出し
+async def fetch_sheet_data():
+    """非同期でスプレッドシートデータを取得"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(SHEET_API, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    print(f"API Error: {response.status}")
+                    return []
+    except Exception as e:
+        print(f"Failed to fetch sheet data: {e}")
+        return []
 
 # ======================
 # Bot
@@ -95,12 +203,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f"Logged in as {bot.user}")
 
-    # ギルドごとにスラッシュコマンドを同期
+    # コマンド同期
     for guild_id in GUILD_IDS:
-        guild_obj = discord.Object(id=guild_id)  # ギルドが None でも同期可能
+        guild_obj = discord.Object(id=guild_id)
         try:
-            await bot.tree.sync(guild=guild_obj)
-            print(f"Synced commands for guild {guild_id}")
+            synced = await bot.tree.sync(guild=guild_obj)
+            print(f"Synced {len(synced)} commands for guild {guild_id}")
         except Exception as e:
             print(f"Failed to sync guild {guild_id}: {e}")
 
@@ -111,12 +219,10 @@ async def on_ready():
     print("Bot ready & all commands synced")
 
 
-
-
 # ======================
 # /get
 # ======================
-@bot.tree.command(name="get",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="get", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 @app_commands.describe(
     status="ステータス",
     count="件数",
@@ -133,10 +239,13 @@ async def get(
     include_unassigned: bool = False,
     charter: str | None = None
 ):
+    # すぐに応答を返す（3秒制限対策）
     await interaction.response.defer()
 
     selected_status = status.value if status else DEFAULT_STATUS
-    rows = requests.get(SHEET_API).json()
+    
+    # 非同期でデータ取得
+    rows = await fetch_sheet_data()
 
     rows = [
         r for r in rows
@@ -157,6 +266,10 @@ async def get(
 
     rows = rows[-count:]
 
+    if not rows:
+        await interaction.followup.send("🔍 該当する曲はありません")
+        return
+
     embed = discord.Embed(title="🎵 曲一覧", color=0x5865F2)
 
     for r in rows:
@@ -174,14 +287,15 @@ async def get(
     embed.set_footer(text=f"凡例:{STATUS_LEGEND}")
     await interaction.followup.send(embed=embed)
 
+
 # ======================
 # /search
 # ======================
-@bot.tree.command(name="search",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="search", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def search(interaction: discord.Interaction, keyword: str):
     await interaction.response.defer()
 
-    rows = requests.get(SHEET_API).json()
+    rows = await fetch_sheet_data()
 
     rows = [
         r for r in rows
@@ -203,10 +317,7 @@ async def search(interaction: discord.Interaction, keyword: str):
         await interaction.followup.send("🔍 該当する曲はありません")
         return
 
-    embed = discord.Embed(
-        title="🎵 曲一覧",
-        color=0x5865F2
-    )
+    embed = discord.Embed(title="🎵 曲一覧", color=0x5865F2)
 
     for r in rows[:10]:
         embed.add_field(
@@ -228,7 +339,7 @@ async def search(interaction: discord.Interaction, keyword: str):
 # ======================
 # /listadd
 # ======================
-@bot.tree.command(name="listadd",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="listadd", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def listadd(interaction: discord.Interaction, name: str, user: discord.User):
     data = load_charters()
     data.setdefault(name, [])
@@ -237,10 +348,11 @@ async def listadd(interaction: discord.Interaction, name: str, user: discord.Use
         save_charters(data)
     await interaction.response.send_message("✅ 追加しました")
 
+
 # ======================
 # /list
 # ======================
-@bot.tree.command(name="list",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="list", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def list_cmd(interaction: discord.Interaction):
     data = load_charters()
     user_map = {}
@@ -248,6 +360,10 @@ async def list_cmd(interaction: discord.Interaction):
     for name, users in data.items():
         for uid in users:
             user_map.setdefault(uid, []).append(name)
+
+    if not user_map:
+        await interaction.response.send_message("📭 登録なし")
+        return
 
     embed = discord.Embed(title="📋 Charter一覧", color=0x57F287)
 
@@ -260,12 +376,13 @@ async def list_cmd(interaction: discord.Interaction):
             inline=False
         )
 
-    await interaction.response.send_message(embed=embed if user_map else "登録なし")
+    await interaction.response.send_message(embed=embed)
+
 
 # ======================
 # /listopt
 # ======================
-@bot.tree.command(name="listopt",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="listopt", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 @app_commands.choices(
     action=[
         app_commands.Choice(name="追加", value="add"),
@@ -297,14 +414,15 @@ async def listopt(
         else:
             await interaction.response.send_message("❌ 紐づいていません")
 
+
 # ======================
 # /deadline
 # ======================
-@bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認",guilds=[discord.Object(id=g) for g in GUILD_IDS])
+@bot.tree.command(name="deadline", description="自分の作業中・優先作業タスクをDMで確認", guilds=[discord.Object(id=g) for g in GUILD_IDS])
 async def deadline(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
-    rows = requests.get(SHEET_API).json()
+    rows = await fetch_sheet_data()
     charter_map = load_charters()
 
     my_aliases = [
@@ -371,11 +489,17 @@ async def deadline(interaction: discord.Interaction):
         )
         return
 
-    await interaction.user.send(embed=embed)
-    await interaction.followup.send(
-        "📬 DMに担当中タスクを送信しました",
-        ephemeral=True
-    )
+    try:
+        await interaction.user.send(embed=embed)
+        await interaction.followup.send(
+            "📬 DMに担当中タスクを送信しました",
+            ephemeral=True
+        )
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ DMを送信できませんでした。DMを受け取れる設定にしてください",
+            ephemeral=True
+        )
 
 
 # ======================
@@ -383,10 +507,10 @@ async def deadline(interaction: discord.Interaction):
 # ======================
 @tasks.loop(hours=24)
 async def deadline_check():
-    try:
-        rows = requests.get(SHEET_API).json()
-    except Exception as e:
-        print("Failed to fetch Sheet:", e)
+    rows = await fetch_sheet_data()
+    
+    if not rows:
+        print("No data fetched for deadline check")
         return
 
     today = datetime.now(timezone.utc).date()
@@ -454,6 +578,7 @@ async def deadline_check():
 
     save_notified(notified)
 
+
 # ======================
 # 起動
 # ======================
@@ -462,3 +587,4 @@ if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     # Start Discord bot
     bot.run(TOKEN)
+
